@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>CPSC 424, Lab 2, Exercise 2 - Szachownica</title>
+<style>
+    body {
+        background-color: #DDDDDD;
+    }
+    canvas {
+        background-color: white;
+        display: block;
+    }
+    #canvasholder {
+        border: 2px solid black;
+        float: left;
+    }
+</style>
+<script>
+"use strict";
+ 
+var canvas;
+var graphics;
+var pixelSize;
+ 
+function draw() {
+    // Czyszczenie tła
+    graphics.clearRect(0, 0, 600, 600);
+ 
+    // Parametry szachownicy
+    var rozmiarSzachownicy = 400; // Całkowity rozmiar w pikselach
+    var rozmiarPola = rozmiarSzachownicy / 8; // 50 pikseli na jedno pole
+    var przesuniecieX = 100; // Margines od lewej krawędzi płótna
+    var przesuniecieY = 100; // Margines od górnej krawędzi płótna
+ 
+    // Opcjonalnie: rysowanie ramki wokół szachownicy
+    graphics.fillStyle = "#333333";
+    graphics.fillRect(przesuniecieX - 4, przesuniecieY - 4, rozmiarSzachownicy + 8, rozmiarSzachownicy + 8);
+ 
+    // Główna pętla generująca pola
+    for (var rzad = 0; rzad < 8; rzad++) {
+        for (var kolumna = 0; kolumna < 8; kolumna++) {
+            
+            // Magia szachownicy: sprawdzamy czy suma rzędu i kolumny jest parzysta
+            if ((rzad + kolumna) % 2 === 0) {
+                graphics.fillStyle = "#FFFFFF"; // Jasny kolor (kremowy)
+            } else {
+                graphics.fillStyle = "#000000"; // Ciemny kolor (brązowy)
+            }
+ 
+            // Obliczanie precyzyjnych współrzędnych (X i Y) dla konkretnego kwadratu
+            var x = przesuniecieX + (kolumna * rozmiarPola);
+            var y = przesuniecieY + (rzad * rozmiarPola);
+ 
+            // Rysowanie pojedynczego pola
+            graphics.fillRect(x, y, rozmiarPola, rozmiarPola);
+        }
+    }
+} // end of draw()
+ 
+function applyWindowToViewportTransformation(left,right,bottom,top,preserveAspect) {
+    var displayAspect, windowAspect;
+    var excess;
+    var pixelwidth, pixelheight;
+    if (preserveAspect) {
+        displayAspect = Math.abs(canvas.height / canvas.width);
+        windowAspect = Math.abs(( top-bottom ) / ( right-left ));
+        if (displayAspect > windowAspect) {
+            excess = (top-bottom) * (displayAspect/windowAspect - 1);
+            top = top + excess/2;
+            bottom = bottom - excess/2;
+        }
+        else if (displayAspect < windowAspect) {
+            excess = (right-left) * (windowAspect/displayAspect - 1);
+            right = right + excess/2;
+            left = left - excess/2;
+        }
+    }
+    graphics.scale( canvas.width / (right-left), canvas.height / (bottom-top) );
+    graphics.translate( -left, -top );
+    pixelwidth = Math.abs(( right - left ) / canvas.width);
+    pixelheight = Math.abs(( bottom - top ) / canvas.height);
+    pixelSize = Math.max(pixelwidth,pixelheight);
+}
+ 
+function addGraphicsContextExtras(graphics) {
+    graphics.strokeLine = function(x1,y1,x2,y2) {
+        this.beginPath();
+        this.moveTo(x1,y1);
+        this.lineTo(x2,y2);
+        this.stroke();
+    }
+    graphics.fillCircle = function(x,y,r) {
+        this.beginPath();
+        this.arc(x,y,r,0,2*Math.PI,false);
+        this.fill();
+    }
+    graphics.strokeCircle = function(x,y,radius) {
+        this.beginPath();
+        this.arc(x,y,radius,0,2*Math.PI,false);
+        this.stroke();
+    }
+    graphics.fillPoly = function() {
+        if (arguments.length < 6) return;
+        this.beginPath();
+        this.moveTo(arguments[0],arguments[1]);
+        for (var i = 2; i+1 < arguments.length; i = i + 2) {
+            this.lineTo(arguments[i],arguments[i+1]);
+        }
+        this.closePath();
+        this.fill();
+    }
+    graphics.strokePoly = function() {
+        if (arguments.length < 4) return;
+        this.beginPath();
+        this.moveTo(arguments[0],arguments[1]);
+        for (var i = 2; i+1 < arguments.length; i = i + 2) {
+            this.lineTo(arguments[i],arguments[i+1]);
+        }
+        this.closePath();
+        this.stroke();
+    }
+    graphics.fillOval = function(x,y,horizontalRadius,verticalRadius) {
+        this.save();
+        this.translate(x,y);
+        this.scale(horizontalRadius,verticalRadius);
+        this.beginPath();
+        this.arc(0,0,1,0,2*Math.PI,false);
+        this.restore();
+        this.fill();
+    }
+    graphics.strokeOval = function(x,y,horizontalRadius,verticalRadius) {
+        this.save();
+        this.translate(x,y);
+        this.scale(horizontalRadius,verticalRadius);
+        this.beginPath();
+        this.arc(0,0,1,0,2*Math.PI,false);
+        this.restore();
+        this.stroke();
+    }
+    graphics.getRGB = function(x,y) {
+        var color = this.getImageData(x,y,1,1);
+        return color.data;
+    }
+}
+ 
+function init() {
+    try {
+        canvas = document.getElementById("canvas");
+        graphics = canvas.getContext("2d");
+    } catch(e) {
+        document.getElementById("canvasholder").innerHTML =
+        "Canvas graphics is not supported.<br>" +
+        "An error occurred while initializing graphics.";
+    }
+    addGraphicsContextExtras(graphics);
+    draw();
+}
+</script>
+</head>
+<body onload="init()">
+ 
+<h2>CS 424, Lab 2, Exercise 1 - Szachownica</h2>
+ 
+<noscript>
+    <p>JavaScript is required to use this page.</p>
+</noscript>
+ 
+<div id="canvasholder">
+    <canvas id="canvas" width="600" height="600">
+        Canvas not supported.
+    </canvas>
+</div>
+ 
+</body>
+</html>

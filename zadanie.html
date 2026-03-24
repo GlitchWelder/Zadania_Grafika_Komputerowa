@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html>
+<head>
+<meta charset="UTF-8">
+<title>CPSC 424, Lab 2, Exercise 1</title>
+<style>
+    body {
+        background-color: #DDDDDD;
+    }
+    canvas {
+        background-color: #E0FFFF; /* Lekko błękitne tło jak na obrazku */
+        display: block;
+    }
+    #canvasholder {
+        border: 2px solid black;
+        float: left;
+    }
+</style>
+<script>
+"use strict";
+ 
+var canvas;
+var graphics;
+var pixelSize;
+ 
+function draw() {
+    graphics.clearRect(0, 0, 600, 600);
+ 
+    // Zapisujemy stan i przesuwamy środek na środek płótna
+    graphics.save();
+    graphics.translate(300, 300);
+ 
+    // Lekki obrót prostokąta (jak na Twoim obrazku)
+    graphics.rotate(0.06);
+ 
+    // --- 1. CIAŁO (Błękitny prostokąt z czarną ramką) ---
+    graphics.fillStyle = "cyan";
+    graphics.fillRect(-150, -90, 300, 180);
+    
+    graphics.strokeStyle = "black";
+    graphics.lineWidth = 3;
+    graphics.strokeRect(-150, -90, 300, 180);
+ 
+    // --- 2. OCZY ---
+    // Lewe oko
+    graphics.fillStyle = "white";
+    graphics.fillCircle(-60, -20, 16); // białko
+    graphics.fillStyle = "black";
+    graphics.fillCircle(-60, -20, 8);  // źrenica
+    graphics.fillStyle = "white";
+    graphics.fillCircle(-63, -23, 3);  // błysk
+ 
+    // Prawe oko
+    graphics.fillStyle = "white";
+    graphics.fillCircle(60, -20, 16); // białko
+    graphics.fillStyle = "black";
+    graphics.fillCircle(60, -20, 8);  // źrenica
+    graphics.fillStyle = "white";
+    graphics.fillCircle(57, -23, 3);  // błysk
+ 
+    // --- 3. UŚMIECH ---
+    graphics.fillStyle = "black";
+    graphics.beginPath();
+    graphics.moveTo(-40, 30); // Lewy kącik
+    // Dolna część ust
+    graphics.bezierCurveTo(-30, 75, 30, 75, 40, 30); // Prawy kącik
+    // Górna część ust
+    graphics.bezierCurveTo(20, 50, -20, 50, -40, 30);
+    graphics.fill();
+ 
+    // Ząbek (biały kwadracik)
+    graphics.fillStyle = "white";
+    graphics.fillRect(-8, 45, 16, 12);
+ 
+    // --- 4. LINIE UŚMIECHU (dołeczki) ---
+    graphics.strokeStyle = "black";
+    graphics.lineWidth = 2;
+    graphics.lineCap = "round";
+ 
+    // Lewy dołeczek
+    graphics.beginPath();
+    graphics.moveTo(-48, 25);
+    graphics.quadraticCurveTo(-45, 35, -35, 28);
+    graphics.stroke();
+ 
+    // Prawy dołeczek
+    graphics.beginPath();
+    graphics.moveTo(48, 25);
+    graphics.quadraticCurveTo(45, 35, 35, 28);
+    graphics.stroke();
+ 
+    graphics.restore();
+} // end of draw()
+ 
+function applyWindowToViewportTransformation(left,right,bottom,top,preserveAspect) {
+    var displayAspect, windowAspect;
+    var excess;
+    var pixelwidth, pixelheight;
+    if (preserveAspect) {
+        displayAspect = Math.abs(canvas.height / canvas.width);
+        windowAspect = Math.abs(( top-bottom ) / ( right-left ));
+        if (displayAspect > windowAspect) {
+            excess = (top-bottom) * (displayAspect/windowAspect - 1);
+            top = top + excess/2;
+            bottom = bottom - excess/2;
+        }
+        else if (displayAspect < windowAspect) {
+            excess = (right-left) * (windowAspect/displayAspect - 1);
+            right = right + excess/2;
+            left = left - excess/2;
+        }
+    }
+    graphics.scale( canvas.width / (right-left), canvas.height / (bottom-top) );
+    graphics.translate( -left, -top );
+    pixelwidth = Math.abs(( right - left ) / canvas.width);
+    pixelheight = Math.abs(( bottom - top ) / canvas.height);
+    pixelSize = Math.max(pixelwidth,pixelheight);
+}
+ 
+function addGraphicsContextExtras(graphics) {
+    graphics.strokeLine = function(x1,y1,x2,y2) {
+        this.beginPath();
+        this.moveTo(x1,y1);
+        this.lineTo(x2,y2);
+        this.stroke();
+    }
+    graphics.fillCircle = function(x,y,r) {
+        this.beginPath();
+        this.arc(x,y,r,0,2*Math.PI,false);
+        this.fill();
+    }
+    graphics.strokeCircle = function(x,y,radius) {
+        this.beginPath();
+        this.arc(x,y,radius,0,2*Math.PI,false);
+        this.stroke();
+    }
+    graphics.fillPoly = function() {
+        if (arguments.length < 6) return;
+        this.beginPath();
+        this.moveTo(arguments[0],arguments[1]);
+        for (var i = 2; i+1 < arguments.length; i = i + 2) {
+            this.lineTo(arguments[i],arguments[i+1]);
+        }
+        this.closePath();
+        this.fill();
+    }
+    graphics.strokePoly = function() {
+        if (arguments.length < 4) return;
+        this.beginPath();
+        this.moveTo(arguments[0],arguments[1]);
+        for (var i = 2; i+1 < arguments.length; i = i + 2) {
+            this.lineTo(arguments[i],arguments[i+1]);
+        }
+        this.closePath();
+        this.stroke();
+    }
+    graphics.fillOval = function(x,y,horizontalRadius,verticalRadius) {
+        this.save();
+        this.translate(x,y);
+        this.scale(horizontalRadius,verticalRadius);
+        this.beginPath();
+        this.arc(0,0,1,0,2*Math.PI,false);
+        this.restore();
+        this.fill();
+    }
+    graphics.strokeOval = function(x,y,horizontalRadius,verticalRadius) {
+        this.save();
+        this.translate(x,y);
+        this.scale(horizontalRadius,verticalRadius);
+        this.beginPath();
+        this.arc(0,0,1,0,2*Math.PI,false);
+        this.restore();
+        this.stroke();
+    }
+    graphics.getRGB = function(x,y) {
+        var color = this.getImageData(x,y,1,1);
+        return color.data;
+    }
+}
+ 
+function init() {
+    try {
+        canvas = document.getElementById("canvas");
+        graphics = canvas.getContext("2d");
+    } catch(e) {
+        document.getElementById("canvasholder").innerHTML =
+        "Canvas graphics is not supported.<br>" +
+        "An error occurred while initializing graphics.";
+    }
+    addGraphicsContextExtras(graphics);
+    draw();
+}
+</script>
+</head>
+<body onload="init()">
+ 
+<h2>CS 424, Lab 2, Exercise 1</h2>
+ 
+<noscript>
+    <p>JavaScript is required to use this page.</p>
+</noscript>
+ 
+<div id="canvasholder">
+    <canvas id="canvas" width="600" height="600">
+        Canvas not supported.
+    </canvas>
+</div>
+ 
+</body>
+</html>
