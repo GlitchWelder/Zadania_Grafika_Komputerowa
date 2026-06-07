@@ -1,0 +1,220 @@
+<!DOCTYPE html>
+<meta charset="UTF-8">
+<html>
+<head>
+<title>Lab 12 – Fala sinusoidalna WebGL</title>
+<style>
+    body {
+        background-color: #0b1020;
+        color: #d7e3ff;
+        font-family: "Segoe UI", Tahoma, sans-serif;
+    }
+    label { white-space: pre; margin-left: 25px; }
+    canvas { border-radius: 12px; box-shadow: 0 0 30px rgba(0,0,0,0.6); }
+</style>
+
+<script type="x-shader/x-vertex" id="vshader-source">
+    attribute vec2 a_coords;
+    void main() {
+        gl_Position = vec4(a_coords, 0.0, 1.0);
+    }
+</script>
+
+<script type="x-shader/x-fragment" id="fshader-source">
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
+       precision highp float;
+    #else
+       precision mediump float;
+    #endif
+    uniform float u_time;        // czas animacji (rośnie z każdą klatką)
+    uniform vec2  u_resolution;  // rozmiar płótna w pikselach
+
+    // Kolor jednej fali w zależności od wysokości i odległości od krzywej
+    vec3 drawWave(vec2 uv, float frequency, float speed, float amplitude,
+                  float centerY, float thickness, float glow) {
+        // Wartość fali sinusoidalnej; odjęcie u_time przesuwa falę w prawo
+        float wave = sin(uv.x * frequency - u_time * speed);
+
+        // Pozycja krzywej w pionie wokół zadanego środka
+        float curveY = centerY + amplitude * wave;
+
+        // Odległość piksela w pionie od krzywej fali
+        float dist = abs(uv.y - curveY);
+
+        // Ostry rdzeń linii + miękka poświata (glow) wokół niej
+        float core = 1.0 - smoothstep(0.0, thickness, dist);
+        float halo = glow / (1.0 + 220.0 * dist * dist);
+        float intensity = clamp(core + halo, 0.0, 1.0);
+
+        // Mapowanie wartości fali z zakresu [-1, 1] na [0, 1]
+        float t = (wave + 1.0) / 2.0;
+
+        // Gradient: -1.0 -> żółty, środek -> pomarańcz, 1.0 -> czerwony
+        vec3 yellow = vec3(1.0, 0.92, 0.15);
+        vec3 orange = vec3(1.0, 0.45, 0.05);
+        vec3 red    = vec3(0.95, 0.08, 0.12);
+        vec3 waveColor = mix(yellow, orange, smoothstep(0.0, 0.5, t));
+        waveColor = mix(waveColor, red, smoothstep(0.5, 1.0, t));
+
+        return waveColor * intensity;
+    }
+
+    void main() {
+        // Pozycja piksela mapowana na współrzędne UV w zakresie 0.0 – 1.0
+        vec2 uv = gl_FragCoord.xy / u_resolution;
+
+        // Pionowy gradient tła (granat -> fiolet)
+        vec3 background = mix(vec3(0.03, 0.04, 0.10),
+                              vec3(0.10, 0.04, 0.16), uv.y);
+
+        // Trzy fale o różnych parametrach budują warstwowy układ sceny
+        vec3 color = background;
+        color += drawWave(uv, 9.0,  1.6, 0.26, 0.50, 0.006, 0.55);  // główna fala
+        color += 0.5 * drawWave(uv, 16.0, 2.6, 0.14, 0.32, 0.004, 0.35); // szybsza, niżej
+        color += 0.4 * drawWave(uv, 5.0,  1.0, 0.18, 0.70, 0.004, 0.30); // wolna, wyżej
+
+        gl_FragColor = vec4(color, 1.0);
+    }
+</script>
+
+<script>
+
+"use strict";
+
+var gl;
+var canvas;
+
+var a_coords_loc;
+
+var u_time;
+var u_resolution;
+
+var quadBuffer;
+
+var frameNumber = 0;
+
+function draw() {
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    // Przekazanie aktualnego czasu i rozdzielczości do shadera fragmentów
+    gl.uniform1f(u_time, frameNumber * 0.05);
+    gl.uniform2f(u_resolution, canvas.width, canvas.height);
+
+    // Rysowanie prostokąta wypełniającego całe płótno (dwa trójkąty)
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    gl.vertexAttribPointer(a_coords_loc, 2, gl.FLOAT, false, 0, 0);
+    gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
+}
+
+function createProgram(gl, vertexShaderID, fragmentShaderID, attribute0) {
+    function getTextContent(elementID) {
+        var element = document.getElementById(elementID);
+        var node = element.firstChild;
+        var str = "";
+        while (node) {
+            if (node.nodeType == 3) str += node.textContent;
+            node = node.nextSibling;
+        }
+        return str;
+    }
+    var vertexShaderSource   = getTextContent(vertexShaderID);
+    var fragmentShaderSource = getTextContent(fragmentShaderID);
+    var vsh = gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vsh, vertexShaderSource);
+    gl.compileShader(vsh);
+    if (!gl.getShaderParameter(vsh, gl.COMPILE_STATUS))
+        throw "Error in vertex shader: " + gl.getShaderInfoLog(vsh);
+    var fsh = gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fsh, fragmentShaderSource);
+    gl.compileShader(fsh);
+    if (!gl.getShaderParameter(fsh, gl.COMPILE_STATUS))
+        throw "Error in fragment shader: " + gl.getShaderInfoLog(fsh);
+    var prog = gl.createProgram();
+    gl.attachShader(prog, vsh);
+    gl.attachShader(prog, fsh);
+    if (attribute0) gl.bindAttribLocation(prog, 0, attribute0);
+    gl.linkProgram(prog);
+    if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
+        throw "Link error: " + gl.getProgramInfoLog(prog);
+    return prog;
+}
+
+function initGL() {
+    var prog = createProgram(gl, "vshader-source", "fshader-source", "a_coords");
+    gl.useProgram(prog);
+
+    a_coords_loc = gl.getAttribLocation(prog, "a_coords");
+    gl.enableVertexAttribArray(a_coords_loc);
+
+    u_time       = gl.getUniformLocation(prog, "u_time");
+    u_resolution = gl.getUniformLocation(prog, "u_resolution");
+
+    // Prostokąt w przestrzeni przyciętej (clip space) – cztery rogi płótna
+    quadBuffer = gl.createBuffer();
+    gl.bindBuffer(gl.ARRAY_BUFFER, quadBuffer);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+        -1, -1,
+         1, -1,
+        -1,  1,
+         1,  1
+    ]), gl.STATIC_DRAW);
+}
+
+var animating = false;
+
+function frame() {
+    if (animating) {
+        frameNumber += 1;
+        draw();
+        requestAnimationFrame(frame);
+    }
+}
+
+function setIsAnimating() {
+    var run = document.getElementById("animCheck").checked;
+    if (run != animating) {
+        animating = run;
+        if (animating) requestAnimationFrame(frame);
+    }
+}
+
+function init() {
+    try {
+        canvas = document.getElementById("webglcanvas");
+        gl = canvas.getContext("webgl");
+        if (!gl) throw "Browser does not support WebGL";
+    } catch(e) {
+        document.getElementById("message").innerHTML = "<p>Brak obsługi WebGL: " + e + "</p>";
+        return;
+    }
+    try {
+        initGL();
+    } catch(e) {
+        document.getElementById("message").innerHTML = "<p>Błąd inicjalizacji WebGL: " + e + "</p>";
+        return;
+    }
+
+    document.getElementById("animCheck").checked = false;
+    document.getElementById("animCheck").addEventListener("change", setIsAnimating);
+
+    draw();
+}
+
+</script>
+</head>
+<body onload="init()">
+
+<h2>Lab 12 – Fala sinusoidalna (WebGL, shader fragmentów)</h2>
+
+<p id="message" style="font-weight:bold">Włącz animację, aby fale przesuwały się w prawo.</p>
+
+<p>
+    <label><input type="checkbox" id="animCheck">Animacja</label>
+</p>
+
+<div>
+    <canvas width=900 height=600 id="webglcanvas" style="background-color:#000000"></canvas>
+</div>
+</body>
+</html>
