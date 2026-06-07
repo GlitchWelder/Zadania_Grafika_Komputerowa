@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Raymarch trudniejsze</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #000;
+      overflow: hidden;
+      font-family: monospace;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #controls {
+      position: absolute;
+      top: 50%;
+      left: 22px;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 10;
+    }
+
+    #controls button {
+      padding: 12px 28px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.07);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: rgba(255, 255, 255, 0.60);
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
+    }
+
+    #controls button:hover {
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.45);
+      color: rgba(255, 255, 255, 0.90);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.40);
+    }
+
+    #controls button.aktywny {
+      background: rgba(255, 100, 40, 0.28);
+      border-color: rgba(255, 130, 60, 0.75);
+      color: #ffb07a;
+      box-shadow: 0 0 18px rgba(255, 100, 40, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="controls">
+    <button id="btn-0" class="aktywny" onclick="ustawOperacje(0, this)">Suma</button>
+    <button id="btn-1" onclick="ustawOperacje(1, this)">Przecięcie</button>
+    <button id="btn-2" onclick="ustawOperacje(2, this)">Różnica</button>
+  </div>
+
+  <script type="importmap">
+{
+  "imports": {
+    "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js"
+  }
+}
+</script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    const scena = new THREE.Scene();
+    const kamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    const vertexShader = `
+void main() {
+  gl_Position = vec4(position, 1.0);
+}
+`;
+
+    const fragmentShader = `
+uniform vec2  u_resolution;
+uniform float u_time;
+uniform int   u_operation;
+
+#define MAX_STEPS 120
+#define MAX_DIST  50.0
+#define SURF_DIST 0.001
+
+/* Zniekształcona sfera – powierzchnia kuli modyfikowana trzema falami sinusoidalnymi.
+   Każda fala zależy od pozycji punktu na kuli (p.x, p.y, p.z) oraz u_time,
+   co daje organiczne, falujące zniekształcenie przypominające pulsującą tkankę.
+   Fale mają różne częstotliwości i prędkości, żeby uniknąć regularnego wzoru. */
+float sdSphere(vec3 p, float r) {
+  float czest1 = 4.2;
+  float czest2 = 6.8;
+  float czest3 = 3.1;
+
+  /* Pierwsza fala – wzdłuż XZ, wolna pulsacja */
+  float fala1 = sin(p.x * czest1 + u_time * 0.9)
+              * cos(p.z * czest1 + u_time * 1.2)
+              * 0.10;
+
+  /* Druga fala – wzdłuż YZ, szybka nieregularność */
+  float fala2 = sin(p.y * czest2 + u_time * 1.7)
+              * cos(p.z * (czest2 - 2.0) + u_time * 0.5)
+              * 0.055;
+
+  /* Trzecia fala – wzdłuż XY, dodaje asymetrię bryły */
+  float fala3 = sin((p.x + p.y) * czest3 + u_time * 2.1)
+              * 0.04;
+
+  return length(p) - r + fala1 + fala2 + fala3;
+}
+
+/* Torus: t.x – promień główny, t.y – promień rury */
+float sdTorus(vec3 p, vec2 t) {
+  vec2 q = vec2(length(p.xz) - t.x, p.y);
+  return length(q) - t.y;
+}
+
+mat2 obrot2D(float kat) {
+  float c = cos(kat);
+  float s = sin(kat);
+  return mat2(c, -s, s, c);
+}
+
+float scene(vec3 p) {
+  /* Sfera organiczna: trajektoria kołowa po XY */
+  float kx   = 0.42 * cos(u_time * 0.85);
+  float ky   = 0.42 * sin(u_time * 0.85);
+  float kula = sdSphere(p - vec3(kx, ky, 0.0), 0.28);
+
+  /* Torus: obrót wokół osi X + obrót wokół osi Z w czasie, pulsowanie rury */
+  float katX  = u_time * 0.55;
+  float katZ  = u_time * 0.38;
+  vec3  pT    = p;
+  pT.yz = obrot2D(katX) * pT.yz;
+  pT.xy = obrot2D(katZ) * pT.xy;
+  float rubraR = 0.10 + 0.04 * sin(u_time * 1.6);
+  float torus  = sdTorus(pT, vec2(0.34, rubraR));
+
+  if (u_operation == 0) return min(kula, torus);
+  if (u_operation == 1) return max(kula, torus);
+  return max(kula, -torus);
+}
+
+/* Normalna przez różniczkowanie skończone */
+vec3 getNormal(vec3 p) {
+  float e = 0.001;
+  return normalize(vec3(
+    scene(p + vec3(e, 0.0, 0.0)) - scene(p - vec3(e, 0.0, 0.0)),
+    scene(p + vec3(0.0, e, 0.0)) - scene(p - vec3(0.0, e, 0.0)),
+    scene(p + vec3(0.0, 0.0, e)) - scene(p - vec3(0.0, 0.0, e))
+  ));
+}
+
+float rayMarch(vec3 ro, vec3 rd) {
+  float d = 0.0;
+  for (int i = 0; i < MAX_STEPS; i++) {
+    vec3  p = ro + rd * d;
+    float h = scene(p);
+    if (h < SURF_DIST) break;
+    if (d > MAX_DIST)  break;
+    d += h;
+  }
+  return d;
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+
+  vec3 ro = vec3(0.0, 0.0, 3.0);
+  vec3 rd = normalize(vec3(uv, -2.0));
+
+  float d = rayMarch(ro, rd);
+
+  /* Tło: głęboki gradient granatowo-fioletowy */
+  float bgFade = length(uv) * 0.7;
+  vec3 kolor = mix(vec3(0.04, 0.02, 0.12), vec3(0.01, 0.005, 0.06), bgFade);
+
+  if (d < MAX_DIST) {
+    vec3 p   = ro + rd * d;
+    vec3 n   = getNormal(p);
+
+    /* Pozycja światła orbituje wokół sceny */
+    vec3 swiatlo = normalize(vec3(
+      1.2 * cos(u_time * 0.7),
+      0.8 + 0.5 * sin(u_time * 0.5),
+      1.5
+    ));
+
+    float diffuse  = max(dot(n, swiatlo), 0.0);
+    vec3  halfVec  = normalize(swiatlo - rd);
+    float specular = pow(max(dot(n, halfVec), 0.0), 48.0);
+
+    /* Kolor bazowy: przejście magenta → cyjan w zależności od czasu i pozycji Y */
+    float t = 0.5 + 0.5 * sin(u_time * 0.6 + p.y * 2.0);
+    vec3 kolorBazy = mix(vec3(0.72, 0.08, 0.85), vec3(0.05, 0.82, 0.78), t);
+
+    vec3 ambient  = 0.08 * kolorBazy;
+    vec3 diffKol  = 0.78 * diffuse * kolorBazy;
+    vec3 specKol  = 0.65 * specular * vec3(0.95, 0.90, 1.0);
+
+    kolor = ambient + diffKol + specKol;
+  }
+
+  kolor = pow(max(kolor, vec3(0.0)), vec3(0.4545));
+  gl_FragColor = vec4(kolor, 1.0);
+}
+`;
+
+    const geometria = new THREE.PlaneGeometry(2, 2);
+    const material = new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader,
+      uniforms: {
+        u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+        u_time: { value: 0.0 },
+        u_operation: { value: 0 }
+      }
+    });
+
+    scena.add(new THREE.Mesh(geometria, material));
+
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      material.uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
+    });
+
+    const zegar = new THREE.Clock();
+    function animuj() {
+      requestAnimationFrame(animuj);
+      material.uniforms.u_time.value = zegar.getElapsedTime();
+      renderer.render(scena, kamera);
+    }
+    animuj();
+
+    window.ustawOperacje = function (numer, btn) {
+      material.uniforms.u_operation.value = numer;
+      document.querySelectorAll('#controls button')
+        .forEach(b => b.classList.remove('aktywny'));
+      btn.classList.add('aktywny');
+    };
+  </script>
+</body>
+
+</html>
