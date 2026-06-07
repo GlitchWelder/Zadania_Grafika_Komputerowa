@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<meta charset="UTF-8">
+<html>
+
+<head>
+    <title>Lab 12 - Wiatrak WebGL</title>
+    <style>
+        body {
+            background-color: #EEEEEE;
+        }
+
+        label {
+            white-space: pre;
+            margin-left: 25px;
+        }
+    </style>
+
+    <script type="x-shader/x-vertex" id="vshader-source">
+    attribute vec3 a_coords;
+    attribute vec3 a_normal;
+    uniform mat4 modelview;
+    uniform mat4 projection;
+    varying vec3 v_normal;
+    varying vec3 v_eyeCoords;
+    void main() {
+        vec4 coords = vec4(a_coords,1.0);
+        vec4 eyeCoords = modelview * coords;
+        gl_Position = projection * eyeCoords;
+        v_normal = normalize(a_normal);
+        v_eyeCoords = eyeCoords.xyz/eyeCoords.w;
+    }
+</script>
+
+    <script type="x-shader/x-fragment" id="fshader-source">
+    #ifdef GL_FRAGMENT_PRECISION_HIGH
+       precision highp float;
+    #else
+       precision mediump float;
+    #endif
+    struct MaterialProperties {
+        vec3 diffuseColor;
+        vec3 specularColor;
+        vec3 emissiveColor;
+        float specularExponent;
+    };
+    struct LightProperties {
+        bool enabled;
+        vec4 position;
+        vec3 color;
+    };
+    uniform MaterialProperties material;
+    uniform LightProperties lights[4];
+    uniform mat3 normalMatrix;
+    varying vec3 v_normal;
+    varying vec3 v_eyeCoords;
+    vec3 lightingEquation( LightProperties light, MaterialProperties material,
+                                vec3 eyeCoords, vec3 N, vec3 V ) {
+        vec3 L, R;
+        if ( light.position.w == 0.0 ) {
+            L = normalize( light.position.xyz );
+        }
+        else {
+            L = normalize( light.position.xyz/light.position.w - eyeCoords );
+        }
+        if (dot(L,N) <= 0.0) {
+            return vec3(0.0);
+        }
+        vec3 reflection = dot(L,N) * light.color * material.diffuseColor;
+        R = -reflect(L,N);
+        if (dot(R,V) > 0.0) {
+            float factor = pow(dot(R,V), material.specularExponent);
+            reflection += factor * material.specularColor * light.color;
+        }
+        return reflection;
+    }
+    void main() {
+        vec3 normal = normalize( normalMatrix * v_normal );
+        vec3 viewDirection = normalize( -v_eyeCoords );
+        vec3 color = material.emissiveColor;
+        for (int i = 0; i < 4; i++) {
+            if (lights[i].enabled) {
+                if (gl_FrontFacing) {
+                    color += lightingEquation( lights[i], material, v_eyeCoords,
+                                                    normal, viewDirection);
+                }
+                else {
+                    color += lightingEquation( lights[i], material, v_eyeCoords,
+                                                    -normal, viewDirection);
+                }
+            }
+        }
+        gl_FragColor = vec4(color, 1);
+    }
+</script>
+
+    <script src="gl-matrix.js"></script>
+    <script src="basic-object-models-IFS.js"></script>
+    <script src="teapot-model-IFS.js"></script>
+    <script>
+
+        "use strict";
+
+        var gl;
+        var canvas;
+
+        var a_coords_loc;
+        var a_normal_loc;
+
+        var u_modelview;
+        var u_projection;
+        var u_normalMatrix;
+
+        var u_material;
+        var u_lights;
+
+        var projection = mat4.create();
+        var modelview = mat4.create();
+        var normalMatrix = mat3.create();
+
+        var frameNumber = 0;
+
+        var cone, cylinderModel, cubeModel, teapot, bladeModel;
+
+        var matrixStack = [];
+
+        var currentColor = [1, 1, 1];
+
+        var rotateX = 0, rotateY = 0;
+
+        function draw() {
+            gl.clearColor(0, 0, 0, 1);
+            gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+
+            mat4.perspective(projection, Math.PI / 4, 1, 1, 100);
+            gl.uniformMatrix4fv(u_projection, false, projection);
+
+            mat4.lookAt(modelview, [4, 6, 20], [0, 4, 0], [0, 1, 0]);
+
+            mat4.rotateX(modelview, modelview, rotateX);
+            mat4.rotateY(modelview, modelview, rotateY);
+
+            drawScene();
+        }
+
+        function drawScene() {
+            // Podstawa
+            pushMatrix();
+            mat4.scale(modelview, modelview, [6, 0.25, 3]);
+            currentColor = [0.52, 0.48, 0.43];
+            cubeModel.render();
+            popMatrix();
+
+            // Słup wiatraka
+            pushMatrix();
+            mat4.translate(modelview, modelview, [0, 3.75, 0]);
+            mat4.rotateX(modelview, modelview, -Math.PI / 2);
+            mat4.scale(modelview, modelview, [0.36, 0.36, 7]);
+            currentColor = [0.72, 0.72, 0.76];
+            cylinderModel.render();
+            popMatrix();
+
+            // Wirnik (4 łopatki co 120°)
+            pushMatrix();
+            mat4.translate(modelview, modelview, [0, 7.2, 0.2]);
+            mat4.rotateZ(modelview, modelview, frameNumber * 0.045);
+            for (var i = 0; i < 4; i++) {
+                pushMatrix();
+                mat4.rotateZ(modelview, modelview, i * 2 * Math.PI / 4);
+                drawBlade();
+                popMatrix();
+            }
+            popMatrix();
+
+            // Czajnik 
+            pushMatrix();
+            mat4.translate(modelview, modelview, [2.5, 0.75, 0.5]);
+            mat4.scale(modelview, modelview, [0.085, 0.085, 0.085]);
+            currentColor = [0.85, 0.28, 0.08];
+            teapot.render();
+            popMatrix();
+        }
+
+        // Geometria łopatki: diamentowy mesh 6 pkt / 8 trójkątów z flat shading
+        function createBladeModelData() {
+            var H = 3.4;        // całkowita wysokość łopatki
+            var w = 0.32;       // połowa szerokości w przekroju (oś X)
+            var d = 0.14;       // połowa grubości w przekroju (oś Z)
+            var midY = H / 4;      // punkt maks. rozszerzenia – 1/4 wysokości
+
+            var base = [0, 0, 0];
+            var tip = [0, H, 0];
+            var left = [-w, midY, 0];
+            var right = [+w, midY, 0];
+            var front = [0, midY, +d];
+            var back = [0, midY, -d];
+
+            // 8 trójkątów – kolejność wierzchołków zapewnia normalne skierowane na zewnątrz
+            var tris = [
+                // dolna połowa (nasada → rozszerzenie)
+                [base, front, left],
+                [base, right, front],
+                [base, back, right],
+                [base, left, back],
+                // górna połowa (rozszerzenie → czubek)
+                [tip, left, front],
+                [tip, front, right],
+                [tip, right, back],
+                [tip, back, left]
+            ];
+
+            function sub(a, b) { return [a[0] - b[0], a[1] - b[1], a[2] - b[2]]; }
+            function cross(a, b) {
+                return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+            }
+            function normalize(v) {
+                var len = Math.sqrt(v[0] * v[0] + v[1] * v[1] + v[2] * v[2]);
+                return [v[0] / len, v[1] / len, v[2] / len];
+            }
+
+            var positions = [], normals = [], indices = [];
+            for (var t = 0; t < tris.length; t++) {
+                var v0 = tris[t][0], v1 = tris[t][1], v2 = tris[t][2];
+                var n = normalize(cross(sub(v1, v0), sub(v2, v0)));
+                var bi = t * 3;
+                positions.push(v0[0], v0[1], v0[2], v1[0], v1[1], v1[2], v2[0], v2[1], v2[2]);
+                normals.push(n[0], n[1], n[2], n[0], n[1], n[2], n[0], n[1], n[2]);
+                indices.push(bi, bi + 1, bi + 2);
+            }
+            return {
+                vertexPositions: new Float32Array(positions),
+                vertexNormals: new Float32Array(normals),
+                indices: new Uint16Array(indices)
+            };
+        }
+
+        function drawBlade() {
+            currentColor = [0.96, 0.95, 0.90];
+            bladeModel.render();
+        }
+
+        function pushMatrix() {
+            matrixStack.push(mat4.clone(modelview));
+        }
+
+        function popMatrix() {
+            modelview = matrixStack.pop();
+        }
+
+        function createModel(modelData) {
+            var model = {};
+            model.coordsBuffer = gl.createBuffer();
+            model.normalBuffer = gl.createBuffer();
+            model.indexBuffer = gl.createBuffer();
+            model.count = modelData.indices.length;
+            gl.bindBuffer(gl.ARRAY_BUFFER, model.coordsBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, modelData.vertexPositions, gl.STATIC_DRAW);
+            gl.bindBuffer(gl.ARRAY_BUFFER, model.normalBuffer);
+            gl.bufferData(gl.ARRAY_BUFFER, modelData.vertexNormals, gl.STATIC_DRAW);
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, model.indexBuffer);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, modelData.indices, gl.STATIC_DRAW);
+            model.render = function () {
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.coordsBuffer);
+                gl.vertexAttribPointer(a_coords_loc, 3, gl.FLOAT, false, 0, 0);
+                gl.bindBuffer(gl.ARRAY_BUFFER, this.normalBuffer);
+                gl.vertexAttribPointer(a_normal_loc, 3, gl.FLOAT, false, 0, 0);
+                gl.uniform3fv(u_material.diffuseColor, currentColor);
+                gl.uniformMatrix4fv(u_modelview, false, modelview);
+                mat3.normalFromMat4(normalMatrix, modelview);
+                gl.uniformMatrix3fv(u_normalMatrix, false, normalMatrix);
+                gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indexBuffer);
+                gl.drawElements(gl.TRIANGLES, this.count, gl.UNSIGNED_SHORT, 0);
+            };
+            return model;
+        }
+
+        function createProgram(gl, vertexShaderID, fragmentShaderID, attribute0) {
+            function getTextContent(elementID) {
+                var element = document.getElementById(elementID);
+                var node = element.firstChild;
+                var str = "";
+                while (node) {
+                    if (node.nodeType == 3) str += node.textContent;
+                    node = node.nextSibling;
+                }
+                return str;
+            }
+            var vertexShaderSource = getTextContent(vertexShaderID);
+            var fragmentShaderSource = getTextContent(fragmentShaderID);
+            var vsh = gl.createShader(gl.VERTEX_SHADER);
+            gl.shaderSource(vsh, vertexShaderSource);
+            gl.compileShader(vsh);
+            if (!gl.getShaderParameter(vsh, gl.COMPILE_STATUS))
+                throw "Error in vertex shader: " + gl.getShaderInfoLog(vsh);
+            var fsh = gl.createShader(gl.FRAGMENT_SHADER);
+            gl.shaderSource(fsh, fragmentShaderSource);
+            gl.compileShader(fsh);
+            if (!gl.getShaderParameter(fsh, gl.COMPILE_STATUS))
+                throw "Error in fragment shader: " + gl.getShaderInfoLog(fsh);
+            var prog = gl.createProgram();
+            gl.attachShader(prog, vsh);
+            gl.attachShader(prog, fsh);
+            if (attribute0) gl.bindAttribLocation(prog, 0, attribute0);
+            gl.linkProgram(prog);
+            if (!gl.getProgramParameter(prog, gl.LINK_STATUS))
+                throw "Link error: " + gl.getProgramInfoLog(prog);
+            return prog;
+        }
+
+        function initGL() {
+            var prog = createProgram(gl, "vshader-source", "fshader-source", "a_coords");
+            gl.useProgram(prog);
+            gl.enable(gl.DEPTH_TEST);
+
+            a_coords_loc = gl.getAttribLocation(prog, "a_coords");
+            a_normal_loc = gl.getAttribLocation(prog, "a_normal");
+            gl.enableVertexAttribArray(a_coords_loc);
+            gl.enableVertexAttribArray(a_normal_loc);
+
+            u_modelview = gl.getUniformLocation(prog, "modelview");
+            u_projection = gl.getUniformLocation(prog, "projection");
+            u_normalMatrix = gl.getUniformLocation(prog, "normalMatrix");
+            u_material = {
+                diffuseColor: gl.getUniformLocation(prog, "material.diffuseColor"),
+                specularColor: gl.getUniformLocation(prog, "material.specularColor"),
+                emissiveColor: gl.getUniformLocation(prog, "material.emissiveColor"),
+                specularExponent: gl.getUniformLocation(prog, "material.specularExponent")
+            };
+            u_lights = new Array(4);
+            for (var i = 0; i < 4; i++) {
+                u_lights[i] = {
+                    enabled: gl.getUniformLocation(prog, "lights[" + i + "].enabled"),
+                    position: gl.getUniformLocation(prog, "lights[" + i + "].position"),
+                    color: gl.getUniformLocation(prog, "lights[" + i + "].color")
+                };
+            }
+
+            gl.uniform3f(u_material.diffuseColor, 1, 1, 1);
+            gl.uniform3f(u_material.specularColor, 0.5, 0.5, 0.5);
+            gl.uniform3f(u_material.emissiveColor, 0, 0, 0);
+            gl.uniform1f(u_material.specularExponent, 64);
+
+            for (var i = 0; i < 4; i++) {
+                gl.uniform1i(u_lights[i].enabled, 0);
+                gl.uniform4f(u_lights[i].position, 0, 0, 1, 0);
+                gl.uniform3f(u_lights[i].color, 1, 1, 1);
+            }
+
+            gl.uniform1i(u_lights[0].enabled, 1);
+            gl.uniform4f(u_lights[0].position, 1, 2, 1.5, 0);
+            gl.uniform3f(u_lights[0].color, 1.0, 0.65, 0.2);
+
+            gl.uniform1i(u_lights[1].enabled, 1);
+            gl.uniform4f(u_lights[1].position, -1, 0.5, 1, 0);
+            gl.uniform3f(u_lights[1].color, 0.6, 0.3, 0.1);
+        }
+
+        function mouseDown(evt) {
+            var prevX = evt.clientX, prevY = evt.clientY;
+            canvas.addEventListener("mousemove", mouseMove);
+            document.addEventListener("mouseup", mouseUp);
+            function mouseMove(evt) {
+                rotateX += (evt.clientY - prevY) / 200;
+                rotateY += (evt.clientX - prevX) / 200;
+                prevX = evt.clientX; prevY = evt.clientY;
+                draw();
+            }
+            function mouseUp() {
+                canvas.removeEventListener("mousemove", mouseMove);
+                document.removeEventListener("mouseup", mouseUp);
+            }
+        }
+
+        var animating = false;
+
+        function frame() {
+            if (animating) {
+                frameNumber += 1;
+                draw();
+                requestAnimationFrame(frame);
+            }
+        }
+
+        function setIsAnimating() {
+            var run = document.getElementById("animCheck").checked;
+            if (run != animating) {
+                animating = run;
+                if (animating) requestAnimationFrame(frame);
+            }
+        }
+
+        function init() {
+            try {
+                canvas = document.getElementById("webglcanvas");
+                gl = canvas.getContext("webgl");
+                if (!gl) throw "Browser does not support WebGL";
+            } catch (e) {
+                document.getElementById("message").innerHTML = "<p>Brak obsługi WebGL: " + e + "</p>";
+                return;
+            }
+            try {
+                initGL();
+            } catch (e) {
+                document.getElementById("message").innerHTML = "<p>Błąd inicjalizacji WebGL: " + e + "</p>";
+                return;
+            }
+
+            document.getElementById("animCheck").checked = false;
+            document.getElementById("animCheck").addEventListener("change", setIsAnimating);
+            document.getElementById("reset").addEventListener("click", function () { rotateX = rotateY = 0; draw(); });
+            canvas.addEventListener("mousedown", mouseDown);
+
+            cone = createModel(uvCone(0.5, 1.0, 64));
+            cylinderModel = createModel(uvCylinder(0.5, 1.0, 64));
+            cubeModel = createModel(cube());
+            teapot = createModel(teapotModel);
+            bladeModel = createModel(createBladeModelData());
+
+            draw();
+        }
+
+    </script>
+</head>
+
+<body onload="init()">
+
+    <h2>Lab 12 – Wiatrak (WebGL, oświetlenie, hierarchia)</h2>
+
+    <p id="message" style="font-weight:bold">Obracaj model przeciągając myszą. Łopatki obracają się po włączeniu
+        animacji.</p>
+
+    <p>
+        <label><input type="checkbox" id="animCheck">Animacja</label>
+        <button id="reset" style="margin-left:40px">Reset</button>
+    </p>
+
+    <div>
+        <canvas width=800 height=800 id="webglcanvas" style="background-color:#FF8C28"></canvas>
+    </div>
+</body>
+
+</html>
