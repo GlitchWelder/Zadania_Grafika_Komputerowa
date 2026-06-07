@@ -1,0 +1,205 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>Wieza Hanoi</title>
+  <style>
+    body { margin: 0; background: #0b0e1a; }
+  </style>
+</head>
+<body>
+
+<script src="https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.min.js"></script>
+<script>
+
+const scene = new THREE.Scene();
+scene.background = new THREE.Color(0x0b0e1a);
+
+// Kamera ustawiona niżej i bardziej z boku, z lekkim zbliżeniem
+const camera = new THREE.PerspectiveCamera(50, window.innerWidth / window.innerHeight, 0.1, 100);
+camera.position.set(-7, 6, 16);
+camera.lookAt(0, 2.0, 0);
+
+const renderer = new THREE.WebGLRenderer({ antialias: true });
+renderer.setSize(window.innerWidth, window.innerHeight);
+document.body.appendChild(renderer.domElement);
+
+// Ciemniejsze, bardziej kontrastowe oświetlenie sceny nocnej
+scene.add(new THREE.AmbientLight(0x404060, 0.7));
+const reflektorGlowny = new THREE.DirectionalLight(0xfff0d0, 0.9);
+reflektorGlowny.position.set(-6, 12, 8);
+scene.add(reflektorGlowny);
+const reflektorWypelnienia = new THREE.PointLight(0x55aaff, 0.6, 60);
+reflektorWypelnienia.position.set(8, 4, 6);
+scene.add(reflektorWypelnienia);
+
+// Węższa, ciemna metaliczna podstawa
+const podstawa = new THREE.Mesh(
+  new THREE.BoxGeometry(15, 0.5, 5.5),
+  new THREE.MeshPhongMaterial({ color: 0x2a2f45, shininess: 60 })
+);
+podstawa.position.y = -0.25;
+scene.add(podstawa);
+
+// Słupki bliżej siebie, cieńsze i jasnostalowe
+const pozycjeSlupkow = [-4.2, 0, 4.2];
+
+for (let i = 0; i < 3; i++) {
+  const slupek = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.09, 0.11, 6.5, 16),
+    new THREE.MeshPhongMaterial({ color: 0x9fb4c8, shininess: 90 })
+  );
+  slupek.position.set(pozycjeSlupkow[i], 3.25, 0);
+  scene.add(slupek);
+}
+
+function zrobEtykiete(numer) {
+  const canvas = document.createElement('canvas');
+  canvas.width = 64;
+  canvas.height = 64;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = '#7fffd4';
+  ctx.font = 'bold 50px Georgia';
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(numer, 32, 32);
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: new THREE.CanvasTexture(canvas), transparent: true })
+  );
+  sprite.scale.set(0.9, 0.9, 0.9);
+  return sprite;
+}
+
+for (let i = 0; i < 3; i++) {
+  const etykieta = zrobEtykiete(String(i));
+  etykieta.position.set(pozycjeSlupkow[i], 7.6, 0);
+  scene.add(etykieta);
+}
+
+// Pięć klocków zamiast czterech, chłodno-ciepła paleta i kanciaste bloki
+const kolory = [0x00e5d0, 0x3aa0ff, 0x8a5cff, 0xff5fa2, 0xffb000];
+const promienie = [0.75, 1.20, 1.65, 2.10, 2.55];
+const wysokoscKlocka = 0.62;
+const liczbaKlockow = 5;
+
+const klocki = [];
+for (let i = 0; i < liczbaKlockow; i++) {
+  // Sześciokątne klocki (radialSegments = 6) dają wyraźnie inny, graniasty styl
+  const klocek = new THREE.Mesh(
+    new THREE.CylinderGeometry(promienie[i], promienie[i], wysokoscKlocka, 6),
+    new THREE.MeshPhongMaterial({ color: kolory[i], shininess: 70, specular: 0x222222 })
+  );
+  scene.add(klocek);
+  klocki.push(klocek);
+}
+
+function getPozycjeY(numerMiejscaWStosie) {
+  return numerMiejscaWStosie * wysokoscKlocka + wysokoscKlocka / 2;
+}
+
+// Stos startowy zawiera teraz pięć klocków
+const stosy = [[4, 3, 2, 1, 0], [], []];
+
+function ustawKlocki() {
+  for (let p = 0; p < 3; p++) {
+    for (let s = 0; s < stosy[p].length; s++) {
+      const id = stosy[p][s];
+      klocki[id].position.set(pozycjeSlupkow[p], getPozycjeY(s), 0);
+    }
+  }
+}
+
+ustawKlocki();
+
+const ruchy = [];
+
+function hanoi(n, skad, dokad, pomocniczy) {
+  if (n == 0) return;
+  hanoi(n - 1, skad, pomocniczy, dokad);
+  ruchy.push([skad, dokad]);
+  hanoi(n - 1, pomocniczy, dokad, skad);
+}
+
+hanoi(liczbaKlockow, 0, 2, 1);
+
+let aktualnyRuch = 0;
+let faza = 'pauza';
+let czasFazy = 0;
+let aktywnyKlocek = -1;
+let stosSkad = -1;
+let stosDokad = -1;
+let startX, startY, endX, endY;
+const wysokoscLotu = 9.0;
+
+// Łagodne wygładzenie ruchu (ease-in-out) dla bardziej płynnej animacji
+function wygladz(t) {
+  return t * t * (3 - 2 * t);
+}
+
+let ostatniCzas = Date.now();
+
+function animuj() {
+  requestAnimationFrame(animuj);
+
+  const teraz = Date.now();
+  const dt = (teraz - ostatniCzas) / 1000;
+  ostatniCzas = teraz;
+
+  if (faza == 'pauza') {
+    czasFazy += dt;
+    if (czasFazy > 0.25) {
+      if (aktualnyRuch >= ruchy.length) {
+        faza = 'koniec';
+      } else {
+        const ruch = ruchy[aktualnyRuch];
+        aktualnyRuch++;
+        stosSkad = ruch[0];
+        stosDokad = ruch[1];
+        aktywnyKlocek = stosy[stosSkad][stosy[stosSkad].length - 1];
+        startX = pozycjeSlupkow[stosSkad];
+        startY = getPozycjeY(stosy[stosSkad].length - 1);
+        endX = pozycjeSlupkow[stosDokad];
+        endY = getPozycjeY(stosy[stosDokad].length);
+        faza = 'unoszenie';
+        czasFazy = 0;
+      }
+    }
+  } else if (faza == 'unoszenie') {
+    czasFazy += dt;
+    const postep = wygladz(Math.min(czasFazy / 0.35, 1));
+    klocki[aktywnyKlocek].position.set(startX, startY + (wysokoscLotu - startY) * postep, 0);
+    if (postep >= 1) {
+      faza = 'przesuwanie';
+      czasFazy = 0;
+    }
+  } else if (faza == 'przesuwanie') {
+    czasFazy += dt;
+    const postep = wygladz(Math.min(czasFazy / 0.5, 1));
+    klocki[aktywnyKlocek].position.set(startX + (endX - startX) * postep, wysokoscLotu, 0);
+    // Lekki obrót klocka w locie podkreśla ruch
+    klocki[aktywnyKlocek].rotation.y = postep * Math.PI;
+    if (postep >= 1) {
+      faza = 'opuszczanie';
+      czasFazy = 0;
+    }
+  } else if (faza == 'opuszczanie') {
+    czasFazy += dt;
+    const postep = wygladz(Math.min(czasFazy / 0.35, 1));
+    klocki[aktywnyKlocek].position.set(endX, wysokoscLotu + (endY - wysokoscLotu) * postep, 0);
+    if (postep >= 1) {
+      stosy[stosDokad].push(stosy[stosSkad].pop());
+      klocki[aktywnyKlocek].position.set(endX, endY, 0);
+      klocki[aktywnyKlocek].rotation.y = 0;
+      faza = 'pauza';
+      czasFazy = 0;
+    }
+  }
+
+  renderer.render(scene, camera);
+}
+
+animuj();
+
+</script>
+</body>
+</html>
