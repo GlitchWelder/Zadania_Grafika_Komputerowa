@@ -1,0 +1,354 @@
+<!DOCTYPE html>
+
+<head>
+    <meta charset="UTF-8">
+    <title>CS 424 Lab 9</title>
+    <script type="importmap">
+{
+    "imports": {
+        "three": "https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js",
+        "three/examples/jsm/controls/OrbitControls.js": "https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js"
+    }
+}
+</script>
+    <script type="module">
+
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+
+        "use strict";
+
+        var canvas, renderer, scene, camera;
+
+        var controls;
+
+        var animating = false;
+        var frameNumber = 0;
+
+        var carousel, planetMesh;
+        var horseMeshes = [];
+
+        // Sześciokątna podstawa karuzeli (heksagon)
+        const N_SIDES = 6;
+        const MORPH_FRAMES = 15;
+
+        function render() {
+            renderer.render(scene, camera);
+        }
+
+
+        function parseHorseJSON(json) {
+            const { vertices: verts, faces, uvs: uvLayers = [], scale = 1, morphTargets = [] } = json;
+            const positions = [];
+            const uvCoords = [];
+            const morphPositions = morphTargets.map(() => []);
+
+            const addVert = (vidx, uvi) => {
+                positions.push(verts[vidx * 3] / scale, verts[vidx * 3 + 1] / scale, verts[vidx * 3 + 2] / scale);
+                if (uvi !== undefined && uvLayers[0]) {
+                    uvCoords.push(uvLayers[0][uvi * 2], uvLayers[0][uvi * 2 + 1]);
+                }
+                morphTargets.forEach((mt, mi) => {
+                    morphPositions[mi].push(
+                        mt.vertices[vidx * 3] / scale,
+                        mt.vertices[vidx * 3 + 1] / scale,
+                        mt.vertices[vidx * 3 + 2] / scale
+                    );
+                });
+            };
+
+            let i = 0;
+            while (i < faces.length) {
+                const type = faces[i++];
+                const isQuad = !!(type & 1);
+                const hasMat = !!(type & 2);
+                const hasFaceUv = !!(type & 4);
+                const hasVtxUv = !!(type & 8);
+                const hasFaceNrm = !!(type & 16);
+                const hasVtxNrm = !!(type & 32);
+                const hasFaceCol = !!(type & 64);
+                const hasVtxCol = !!(type & 128);
+                const count = isQuad ? 4 : 3;
+
+                const vi = [];
+                for (let j = 0; j < count; j++) vi.push(faces[i++]);
+
+                if (hasMat) i++;
+                if (hasFaceUv) i += uvLayers.length;
+
+                const uvIdxs = [];
+                if (hasVtxUv) {
+                    for (let layer = 0; layer < uvLayers.length; layer++) {
+                        const row = [];
+                        for (let j = 0; j < count; j++) row.push(faces[i++]);
+                        uvIdxs.push(row);
+                    }
+                }
+
+                if (hasFaceNrm) i++;
+                if (hasVtxNrm) i += count;
+                if (hasFaceCol) i++;
+                if (hasVtxCol) i += count;
+
+                const useUv = hasVtxUv && uvIdxs.length > 0;
+                const tris = isQuad ? [[0, 1, 2], [0, 2, 3]] : [[0, 1, 2]];
+                for (const [a, b, c] of tris) {
+                    for (const idx of [a, b, c]) {
+                        addVert(vi[idx], useUv ? uvIdxs[0][idx] : undefined);
+                    }
+                }
+            }
+
+            const geom = new THREE.BufferGeometry();
+            geom.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3));
+            if (uvCoords.length > 0) {
+                geom.setAttribute('uv', new THREE.Float32BufferAttribute(uvCoords, 2));
+            }
+            geom.computeVertexNormals();
+            geom.morphAttributes.position = morphPositions.map(
+                mp => new THREE.Float32BufferAttribute(mp, 3)
+            );
+            return geom;
+        }
+
+
+
+        async function createWorld() {
+            // Ciemne, nocne tło zamiast białego
+            renderer.setClearColor(0x0b1026);
+            scene = new THREE.Scene();
+            scene.fog = new THREE.Fog(0x0b1026, 30, 70);
+
+            camera = new THREE.PerspectiveCamera(34, canvas.width / canvas.height, 0.1, 200);
+            // Niższe ujęcie pod innym kątem, odsunięte tak by cała karuzela mieściła się w kadrze
+            camera.position.set(11, 6, 30);
+
+            // Chłodne światło otoczenia o niebieskawym odcieniu
+            scene.add(new THREE.AmbientLight(0x6688cc, 0.5));
+
+            // Ciepłe, pomarańczowe światło główne (jak zachodzące słońce)
+            const sunLight = new THREE.DirectionalLight(0xffaa55, 1.1);
+            sunLight.position.set(-8, 10, 6);
+            scene.add(sunLight);
+
+            // Różowe światło wypełniające zamontowane przy kamerze
+            var light;
+            light = new THREE.DirectionalLight(0xff66aa, 0.4);
+            light.position.set(0, 0, 1);
+            camera.add(light);
+            scene.add(camera);
+
+            const horseData = await fetch('resources/horse.js').then(r => r.json());
+            const horseGeom = parseHorseJSON(horseData);
+
+            const texLoader = new THREE.TextureLoader();
+            const planetTex = texLoader.load('resources/earth.jpg');
+
+            carousel = new THREE.Group();
+            scene.add(carousel);
+
+            // Zmniejszona karuzela, aby w całości mieściła się w oknie
+            const RADIUS = 4.2;
+            const POLE_H = 5.5;
+
+            // Chromowe słupki i ciemnoczerwona platforma
+            const poleMat = new THREE.MeshPhongMaterial({ color: 0xcfd4dc, specular: 0xffffff, shininess: 140 });
+            const platMat = new THREE.MeshPhongMaterial({ color: 0xb2122e, specular: 0x661111, shininess: 60 });
+
+            // Grubsza, dwupoziomowa podstawa (heksagon)
+            carousel.add(new THREE.Mesh(
+                new THREE.CylinderGeometry(RADIUS, RADIUS * 1.08, 0.6, N_SIDES),
+                platMat
+            ));
+            const rim = new THREE.Mesh(
+                new THREE.CylinderGeometry(RADIUS * 0.55, RADIUS * 0.55, 0.25, N_SIDES),
+                new THREE.MeshPhongMaterial({ color: 0xf0c040, specular: 0xffffff, shininess: 100 })
+            );
+            rim.position.y = 0.42;
+            carousel.add(rim);
+
+            // Wysoki, złoty stożkowy dach
+            const top = new THREE.Mesh(
+                new THREE.ConeGeometry(RADIUS * 1.05, 2.8, N_SIDES),
+                new THREE.MeshPhongMaterial({ color: 0xf0c040, specular: 0xfff2c0, shininess: 80 })
+            );
+            top.position.y = 6.8;
+            carousel.add(top);
+
+            const HORSE_SCALE = 0.012;
+            const HORSE_R = RADIUS * 0.78;
+            const HORSE_Y = 1.9;
+            // Żywa, neonowa paleta koni
+            const horseColors = [
+                0xff3366, 0xffcc00, 0x33ddff,
+                0xaa33ff, 0x44ff88, 0xff7722
+            ];
+
+            for (let k = 0; k < N_SIDES; k++) {
+                const angle = ((k + 0.5) / N_SIDES) * Math.PI * 2;
+                const hx = Math.cos(angle) * HORSE_R * (-1);
+                const hz = Math.sin(angle) * HORSE_R * (-1);
+
+                const hPole = new THREE.Mesh(
+                    new THREE.CylinderGeometry(0.06, 0.06, POLE_H, 8),
+                    poleMat
+                );
+                hPole.position.set(hx, POLE_H / 2, hz);
+                carousel.add(hPole);
+
+                const mat = new THREE.MeshPhongMaterial({
+                    color: horseColors[k],
+                    specular: 0x888888,
+                    shininess: 45,
+                    flatShading: false,
+                });
+                const mesh = new THREE.Mesh(horseGeom, mat);
+                mesh.scale.setScalar(HORSE_SCALE);
+                mesh.position.set(hx, HORSE_Y, hz);
+                mesh.rotation.y = Math.PI - angle;
+                carousel.add(mesh);
+                horseMeshes.push(mesh);
+            }
+
+            // Centralny model: obracająca się planeta w środku karuzeli
+            planetMesh = new THREE.Mesh(
+                new THREE.SphereGeometry(2.0, 48, 24),
+                new THREE.MeshPhongMaterial({ map: planetTex, specular: 0x335577, shininess: 18 })
+            );
+            planetMesh.position.y = 2.4;
+            scene.add(planetMesh);
+
+            // Pierścień orbitujący wokół planety
+            const ring = new THREE.Mesh(
+                new THREE.TorusGeometry(2.9, 0.1, 12, 60),
+                new THREE.MeshPhongMaterial({ color: 0xddeeff, specular: 0xffffff, shininess: 120 })
+            );
+            ring.position.y = 2.4;
+            ring.rotation.x = Math.PI / 2.3;
+            scene.add(ring);
+            planetMesh.userData.ring = ring;
+
+        }
+
+        function updateForFrame() {
+
+            // Karuzela kręci się w przeciwną stronę — konie biegną w drugim kierunku
+            carousel.rotation.y -= 0.012;
+            planetMesh.rotation.y -= 0.005;
+            if (planetMesh.userData.ring) {
+                planetMesh.userData.ring.rotation.z += 0.01;
+            }
+
+            const SPEED = 6;
+            const base = frameNumber / SPEED;
+
+            horseMeshes.forEach((horse, k) => {
+                const inf = horse.morphTargetInfluences;
+                if (!inf) return;
+                const phaseOffset = (k / horseMeshes.length) * MORPH_FRAMES;
+                const t = (base + phaseOffset) % MORPH_FRAMES;
+                const frameA = Math.floor(t) % MORPH_FRAMES;
+                const frameB = (frameA + 1) % MORPH_FRAMES;
+                const blend = t - Math.floor(t);
+                for (let j = 0; j < MORPH_FRAMES; j++) inf[j] = 0;
+                inf[frameA] = 1 - blend;
+                inf[frameB] = blend;
+            });
+
+        }
+
+        function installOrbitControls() {
+            controls = new OrbitControls(camera, canvas);
+            controls.enablePan = false;
+            controls.enableZoom = false;
+            controls.enableDamping = false;
+            function move() {
+                controls.update();
+                if (!animating) {
+                    render();
+                }
+            }
+            function down() {
+                document.addEventListener("mousemove", move, false);
+            }
+            function up() {
+                document.removeEventListener("mousemove", move, false);
+            }
+            function touch(event) {
+                if (event.touches.length == 1) {
+                    move();
+                }
+            }
+            canvas.addEventListener("mousedown", down, false);
+            canvas.addEventListener("mouseup", up, false);
+            canvas.addEventListener("touchmove", touch, false);
+        }
+
+        function doAnimateCheckbox() {
+            var run = document.getElementById("animateCheckbox").checked;
+            if (run != animating) {
+                animating = run;
+                if (animating) {
+                    requestAnimationFrame(doFrame);
+                }
+            }
+        }
+
+        function doFrame() {
+            if (animating) {
+                frameNumber++;
+                updateForFrame();
+                render();
+                requestAnimationFrame(doFrame);
+            }
+        }
+
+        async function init() {
+            try {
+                canvas = document.getElementById("glcanvas");
+                renderer = new THREE.WebGLRenderer({
+                    canvas: canvas,
+                    antialias: true,
+                    alpha: false
+                });
+            }
+            catch (e) {
+                document.getElementById("message").innerHTML = "<b>Sorry, an error occurred:<br>" +
+                    e + "</b>";
+                return;
+            }
+            document.getElementById("animateCheckbox").checked = false;
+            document.getElementById("animateCheckbox").onchange = doAnimateCheckbox;
+            await createWorld();
+            installOrbitControls();
+            render();
+        }
+
+        window.init = init;
+
+    </script>
+</head>
+
+<body onload="init()">
+
+    <h2>Three.js Modeling Demo: Merry-Go-Round</h2>
+
+    <noscript>
+        <p style="color: #AA0000; font-weight: bold">Sorry, but this page requires JavaScript!</p>
+    </noscript>
+
+    <p style="color:#AA0000; font-weight: bold" id="message">
+    </p>
+
+    <p>
+        <label><input type="checkbox" id="animateCheckbox"><b>Animate</b></label>
+        <b style="margin-left:50px">Use the mouse to rotate the model.</b>
+    </p>
+
+    <div id="canvas-holder" style="float:left; border: thin solid black; background-color: black">
+        <canvas width=1200 height=600 id="glcanvas"></canvas>
+    </div>
+
+</body>
+
+</html>
