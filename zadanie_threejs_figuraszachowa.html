@@ -1,0 +1,167 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Three.js - czarna królowa</title>
+  <style>
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+    }
+
+    body {
+      background: #efe7d6;
+      overflow: hidden;
+    }
+
+    canvas {
+      display: block;
+    }
+  </style>
+</head>
+
+<body>
+  <script type="importmap">
+  {
+    "imports": {
+      "three": "https://unpkg.com/three@0.165.0/build/three.module.js",
+      "three/addons/": "https://unpkg.com/three@0.165.0/examples/jsm/"
+    }
+  }
+  </script>
+
+  <script type="module">
+    import * as THREE from 'three';
+    import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+    // Renderer
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setPixelRatio(window.devicePixelRatio);
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    document.body.appendChild(renderer.domElement);
+
+    // Scena - jasne, ciepłe tło (kontrast dla czarnej figury)
+    const scene = new THREE.Scene();
+    scene.background = new THREE.Color(0xefe7d6);
+    scene.fog = new THREE.Fog(0xefe7d6, 22, 48);
+
+    const camera = new THREE.PerspectiveCamera(42, window.innerWidth / window.innerHeight, 0.1, 100);
+    camera.position.set(-6, 5, 7);
+    camera.lookAt(0, 2.3, 0);
+
+    // Kontrolki
+    const controls = new OrbitControls(camera, renderer.domElement);
+    controls.target.set(0, 2.3, 0);
+    controls.minDistance = 3;
+    controls.maxDistance = 24;
+    controls.enableDamping = true;
+    controls.dampingFactor = 0.06;
+    controls.update();
+
+    // Oświetlenie - chłodne wypełnienie + ciepły reflektor
+    const ambient = new THREE.AmbientLight(0xfff4e8, 0.40);
+    scene.add(ambient);
+
+    const keyLight = new THREE.DirectionalLight(0xffe9c4, 2.6);
+    keyLight.position.set(-7, 11, 6);
+    keyLight.castShadow = true;
+    keyLight.shadow.mapSize.set(2048, 2048);
+    keyLight.shadow.camera.near = 0.5;
+    keyLight.shadow.camera.far = 45;
+    keyLight.shadow.camera.left = -7;
+    keyLight.shadow.camera.right = 7;
+    keyLight.shadow.camera.top = 11;
+    keyLight.shadow.camera.bottom = -2;
+    scene.add(keyLight);
+
+    const rimLight = new THREE.DirectionalLight(0x6fa8ff, 0.9);
+    rimLight.position.set(6, 4, -6);
+    scene.add(rimLight);
+
+    // Podłoga - kwadratowa, jasny "marmur"
+    const ground = new THREE.Mesh(
+      new THREE.PlaneGeometry(14, 14),
+      new THREE.MeshStandardMaterial({ color: 0xd9cfb8, roughness: 0.75, metalness: 0.05 })
+    );
+    ground.rotation.x = -Math.PI / 2;
+    ground.receiveShadow = true;
+    scene.add(ground);
+
+    // Materiał figury - polerowany czarny (czarna królowa)
+    const blackMat = new THREE.MeshStandardMaterial({
+      color: 0x111114,
+      roughness: 0.30,
+      metalness: 0.35,
+    });
+
+    // Profil królowej - smukły korpus, pierścień szyi i spłaszczony dysk (bez korony)
+    const profilePoints = [
+      new THREE.Vector2(0.00, 0.000),
+      new THREE.Vector2(1.30, 0.000),
+      new THREE.Vector2(1.33, 0.090),
+      new THREE.Vector2(1.26, 0.220),
+      new THREE.Vector2(1.06, 0.380),
+      new THREE.Vector2(0.82, 0.560),
+      new THREE.Vector2(0.63, 0.760),
+      new THREE.Vector2(0.52, 0.970),
+      new THREE.Vector2(0.45, 1.220),
+      new THREE.Vector2(0.40, 1.620),
+      new THREE.Vector2(0.36, 2.120),
+      new THREE.Vector2(0.36, 2.560),
+      new THREE.Vector2(0.42, 2.780),
+      new THREE.Vector2(0.56, 2.980),   // kołnierz korpusu
+      new THREE.Vector2(0.66, 3.140),
+      new THREE.Vector2(0.62, 3.280),   // zwężenie ku szyi
+      new THREE.Vector2(0.40, 3.380),
+      new THREE.Vector2(0.32, 3.460),   // pierścień szyi (najwęższe przewężenie)
+      new THREE.Vector2(0.40, 3.560),   // początek rozszerzenia dysku
+      new THREE.Vector2(0.66, 3.680),
+      new THREE.Vector2(0.88, 3.800),
+      new THREE.Vector2(0.96, 3.910),   // najszersza, zaokrąglona krawędź dysku
+      new THREE.Vector2(0.94, 4.010),   // zaokrąglenie górnej krawędzi
+      new THREE.Vector2(0.78, 4.090),
+      new THREE.Vector2(0.46, 4.140),
+      new THREE.Vector2(0.20, 4.180),
+      new THREE.Vector2(0.00, 4.200),
+    ];
+
+    // Korpus wraz z dyskowatym zwieńczeniem (technika obrotowa - LatheGeometry)
+    // Cały profil, włącznie z pierścieniem szyi i spłaszczonym dyskiem, jest
+    // jedną bryłą obrotową, dzięki czemu krawędzie dysku są gładkie i zaokrąglone.
+    const latheGeo = new THREE.LatheGeometry(profilePoints, 80);
+    latheGeo.computeVertexNormals();
+    const latheMesh = new THREE.Mesh(latheGeo, blackMat);
+    latheMesh.castShadow = true;
+    latheMesh.receiveShadow = true;
+    scene.add(latheMesh);
+
+    // Kula wieńcząca na szczycie królowej (SphereGeometry)
+    const ballGeo = new THREE.SphereGeometry(0.22, 32, 32);
+    const ballMesh = new THREE.Mesh(ballGeo, blackMat);
+    ballMesh.position.set(0, 4.200 + 0.18, 0);   // tuż nad dyskiem
+    ballMesh.castShadow = true;
+    ballMesh.receiveShadow = true;
+    scene.add(ballMesh);
+
+    window.addEventListener('resize', () => {
+      camera.aspect = window.innerWidth / window.innerHeight;
+      camera.updateProjectionMatrix();
+      renderer.setSize(window.innerWidth, window.innerHeight);
+    });
+
+    // Pętla renderująca
+    function animate() {
+      requestAnimationFrame(animate);
+      controls.update();
+      renderer.render(scene, camera);
+    }
+    animate();
+  </script>
+</body>
+
+</html>
