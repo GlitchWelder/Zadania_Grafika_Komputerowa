@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="pl">
+
+<head>
+  <meta charset="UTF-8">
+  <title>Raymarch łatwe</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      background: #000;
+      overflow: hidden;
+      font-family: monospace;
+    }
+
+    canvas {
+      display: block;
+    }
+
+    #controls {
+      position: absolute;
+      top: 50%;
+      left: 22px;
+      transform: translateY(-50%);
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+      z-index: 10;
+    }
+
+    #controls button {
+      padding: 12px 28px;
+      font-size: 13px;
+      font-weight: 600;
+      letter-spacing: 0.10em;
+      text-transform: uppercase;
+      border: 1px solid rgba(255, 255, 255, 0.18);
+      border-radius: 12px;
+      background: rgba(255, 255, 255, 0.07);
+      backdrop-filter: blur(10px);
+      -webkit-backdrop-filter: blur(10px);
+      color: rgba(255, 255, 255, 0.60);
+      cursor: pointer;
+      transition: background 0.2s, border-color 0.2s, color 0.2s, box-shadow 0.2s;
+    }
+
+    #controls button:hover {
+      background: rgba(255, 255, 255, 0.14);
+      border-color: rgba(255, 255, 255, 0.45);
+      color: rgba(255, 255, 255, 0.90);
+      box-shadow: 0 4px 20px rgba(0, 0, 0, 0.40);
+    }
+
+    #controls button.aktywny {
+      background: rgba(255, 100, 40, 0.28);
+      border-color: rgba(255, 130, 60, 0.75);
+      color: #ffb07a;
+      box-shadow: 0 0 18px rgba(255, 100, 40, 0.45), inset 0 1px 0 rgba(255, 255, 255, 0.10);
+    }
+  </style>
+</head>
+
+<body>
+
+  <div id="controls">
+    <button id="btn-0" class="aktywny" onclick="ustawOperacje(0, this)">Suma</button>
+    <button id="btn-1" onclick="ustawOperacje(1, this)">Przecięcie</button>
+    <button id="btn-2" onclick="ustawOperacje(2, this)">Różnica</button>
+  </div>
+
+  <script type="importmap">
+{
+  "imports": {
+    "three": "https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.module.js"
+  }
+}
+</script>
+  <script type="module">
+    import * as THREE from 'three';
+
+    const scena = new THREE.Scene();
+    const kamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
+
+    const renderer = new THREE.WebGLRenderer({ antialias: true });
+    renderer.setSize(window.innerWidth, window.innerHeight);
+    renderer.setPixelRatio(window.devicePixelRatio);
+    document.body.appendChild(renderer.domElement);
+
+    const vertexShader = `
+void main() {
+  gl_Position = vec4(position, 1.0);
+}
+`;
+
+    const fragmentShader = `
+uniform vec2  u_resolution;
+uniform float u_time;
+uniform int   u_operation;
+
+#define MAX_STEPS 120
+#define MAX_DIST  50.0
+#define SURF_DIST 0.001
+
+float sdEllipsoid(vec3 p, vec3 r) {
+  float k0 = length(p / r);
+  float k1 = length(p / (r * r));
+  return k0 * (k0 - 1.0) / k1;
+}
+
+float sdRoundBox(vec3 p, vec3 b, float rad) {
+  vec3 q = abs(p) - b + rad;
+  return length(max(q, 0.0)) + min(max(q.x, max(q.y, q.z)), 0.0) - rad;
+}
+
+vec2 obrot2D(vec2 v, float kat) {
+  float c = cos(kat);
+  float s = sin(kat);
+  return vec2(c * v.x - s * v.y,
+              s * v.x + c * v.y);
+}
+
+float scene(vec3 p) {
+  // elipsoida orbituje po okręgu — stały kształt
+  float orbX = 0.38 * cos(u_time * 0.85);
+  float orbY = 0.22 * sin(u_time * 1.7);
+  float elipsoida = sdEllipsoid(p - vec3(orbX, orbY, 0.0), vec3(0.28, 0.28, 0.28));
+
+  // zaokrąglony prostopadłościan obraca się — stały kształt
+  float kat  = u_time * 0.6;
+  vec2  pOb  = obrot2D(p.xy, kat);
+  float zaokr = sdRoundBox(vec3(pOb, p.z), vec3(0.30, 0.16, 0.30), 0.06);
+
+  if (u_operation == 0) return min(elipsoida, zaokr);
+  if (u_operation == 1) return max(elipsoida, zaokr);
+  return max(elipsoida, -zaokr);
+}
+
+float rayMarch(vec3 ro, vec3 rd) {
+  float d = 0.0;
+  for (int i = 0; i < MAX_STEPS; i++) {
+    vec3  p = ro + rd * d;
+    float h = scene(p);
+    if (h < SURF_DIST) break;
+    if (d > MAX_DIST)  break;
+    d += h;
+  }
+  return d;
+}
+
+vec3 normalna(vec3 p) {
+  float eps = 0.001;
+  return normalize(vec3(
+    scene(p + vec3(eps, 0.0, 0.0)) - scene(p - vec3(eps, 0.0, 0.0)),
+    scene(p + vec3(0.0, eps, 0.0)) - scene(p - vec3(0.0, eps, 0.0)),
+    scene(p + vec3(0.0, 0.0, eps)) - scene(p - vec3(0.0, 0.0, eps))
+  ));
+}
+
+void main() {
+  vec2 uv = (gl_FragCoord.xy - 0.5 * u_resolution) / u_resolution.y;
+
+  vec3 ro = vec3(0.0, 0.0, 3.0);
+  vec3 rd = normalize(vec3(uv, -2.0));
+
+  float d = rayMarch(ro, rd);
+
+  // tło: głęboka czerń z ciepłym brązowo-burgundzkim poświatą w centrum
+  float winiety = length(uv) * 1.1;
+  vec3 kolor = mix(vec3(0.10, 0.03, 0.02), vec3(0.02, 0.01, 0.01), clamp(winiety, 0.0, 1.0));
+
+  if (d < MAX_DIST) {
+    vec3 p = ro + rd * d;
+    vec3 n = normalna(p);
+
+    // dwa źródła światła: ciepłe z przodu i chłodne z boku
+    vec3 sw1 = normalize(vec3(1.0, 1.5, 2.5));
+    vec3 sw2 = normalize(vec3(-2.0, -0.5, 1.5));
+    float diff1   = max(dot(n, sw1), 0.0);
+    float diff2   = max(dot(n, sw2), 0.0) * 0.35;
+    float ambient = 0.12;
+    float spec    = pow(max(dot(reflect(-sw1, n), -rd), 0.0), 48.0);
+
+    // kolor: złoto-pomarańczowy <-> gorący róż/magenta
+    float t = 0.5 + 0.5 * sin(u_time * 0.65);
+    vec3 kolorA = vec3(1.00, 0.55, 0.05); // złote pomarańcz
+    vec3 kolorB = vec3(0.95, 0.15, 0.55); // gorący róż
+    vec3 kolorObj = mix(kolorA, kolorB, t);
+
+    // chłodny akcent z drugiego światła
+    vec3 kolorObj2 = vec3(0.30, 0.65, 1.00);
+
+    kolor = kolorObj  * (ambient + diff1 * 0.80)
+          + kolorObj2 * diff2
+          + vec3(1.0, 0.92, 0.80) * spec * 0.70;
+  }
+
+  kolor = pow(max(kolor, vec3(0.0)), vec3(0.4545));
+  gl_FragColor = vec4(kolor, 1.0);
+}
+`;
+
+    const geometria = new THREE.PlaneGeometry(2, 2);
+    const material = new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader,
+      uniforms: {
+        u_resolution: { value: new THREE.Vector2(window.innerWidth, window.innerHeight) },
+        u_time: { value: 0.0 },
+        u_operation: { value: 0 }
+      }
+    });
+
+    scena.add(new THREE.Mesh(geometria, material));
+
+    window.addEventListener('resize', () => {
+      renderer.setSize(window.innerWidth, window.innerHeight);
+      material.uniforms.u_resolution.value.set(window.innerWidth, window.innerHeight);
+    });
+
+    const zegar = new THREE.Clock();
+    function animuj() {
+      requestAnimationFrame(animuj);
+      material.uniforms.u_time.value = zegar.getElapsedTime();
+      renderer.render(scena, kamera);
+    }
+    animuj();
+
+    window.ustawOperacje = function (numer, btn) {
+      material.uniforms.u_operation.value = numer;
+      document.querySelectorAll('#controls button')
+        .forEach(b => b.classList.remove('aktywny'));
+      btn.classList.add('aktywny');
+    };
+  </script>
+</body>
+
+</html>
